@@ -1,0 +1,24 @@
+[Unit]
+Description=Trustr Service Orchestrator — TSM key management, relay routing, and service orchestration
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=trustr
+Group=trustr
+WorkingDirectory=/opt/trustr-service-orchestrator
+ExecStart=/usr/bin/node dist/index.js
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=/opt/trustr-service-orchestrator/.env
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/trustr-service-orchestrator/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
