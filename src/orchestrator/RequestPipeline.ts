@@ -11,19 +11,48 @@ import {
 
 const SEEN_EVENT_MAX_SIZE = 1_000
 
-class SeenEventCache {
-  private readonly ids = new Set<string>()
+interface SeenEventRecord {
+  id: string
+  dTag: string | null
+  timestamp: number
+}
 
-  has(id: string): boolean {
-    return this.ids.has(id)
+class SeenEventCache {
+  private readonly events = new Map<string, SeenEventRecord>()
+
+  shouldProcess(event: NostrEvent): boolean {
+    const dTag = event.tags.find(t => t[0] === 'd')?.[1] ?? null
+    const key = dTag ?? event.id
+
+    const existing = this.events.get(key)
+    if (!existing) return true
+
+    // If this is a replaceable event (has d tag) and is newer, allow reprocessing
+    if (dTag && event.created_at > existing.timestamp) {
+      console.log(
+        `[pipeline] detected updated request ${event.id.slice(0, 8)}... (d:${dTag.slice(0, 8)}..., replacing ${existing.id.slice(0, 8)}...)`
+      )
+      return true
+    }
+
+    // Already seen and not newer
+    return false
   }
 
-  add(id: string): void {
-    if (this.ids.size >= SEEN_EVENT_MAX_SIZE) {
-      const oldest = this.ids.values().next().value as string
-      this.ids.delete(oldest)
+  add(event: NostrEvent): void {
+    const dTag = event.tags.find(t => t[0] === 'd')?.[1] ?? null
+    const key = dTag ?? event.id
+
+    if (this.events.size >= SEEN_EVENT_MAX_SIZE) {
+      const oldest = this.events.keys().next().value as string
+      this.events.delete(oldest)
     }
-    this.ids.add(id)
+
+    this.events.set(key, {
+      id: event.id,
+      dTag,
+      timestamp: event.created_at
+    })
   }
 }
 
@@ -39,9 +68,9 @@ export class RequestPipeline {
   ) {}
 
   async handleRequestEvent(event: NostrEvent, relayUrl: string): Promise<void> {
-    // 1. Deduplication
-    if (this.seenEvents.has(event.id)) return
-    this.seenEvents.add(event.id)
+    // 1. Deduplication / replaceable event handling
+    if (!this.seenEvents.shouldProcess(event)) return
+    this.seenEvents.add(event)
 
     // 2. Kind check
     if (event.kind !== 37572) return
