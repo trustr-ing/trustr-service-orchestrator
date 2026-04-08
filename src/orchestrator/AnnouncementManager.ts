@@ -90,6 +90,7 @@ export class AnnouncementManager {
 
     return {
       ...announcement,
+      created_at: announcement.created_at ?? Math.floor(Date.now() / 1000),
       tags: [...nonRelayTags, ...relayTags],
     }
   }

@@ -3,9 +3,11 @@ import { join } from 'path'
 import { loadConfig } from './config'
 import { SqliteStore } from './store/SqliteStore'
 import { Orchestrator } from './orchestrator/Orchestrator'
+import { HttpServer } from './http/server'
 
 async function main(): Promise<void> {
   const config = loadConfig()
+  const httpPort = parseInt(process.env.HTTP_PORT || '3002', 10)
 
   console.log(`[orchestrator] trustr-service-orchestrator v0.1.0`)
   console.log(`[orchestrator] ${config.services.length} service(s) configured:`)
@@ -27,7 +29,12 @@ async function main(): Promise<void> {
 
   await orchestrator.start()
 
+  // Start HTTP server
+  const httpServer = new HttpServer(httpPort, orchestrator)
+  httpServer.start()
+
   const shutdown = async (): Promise<void> => {
+    httpServer.stop()
     await orchestrator.stop()
     process.exit(0)
   }

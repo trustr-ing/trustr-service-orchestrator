@@ -111,4 +111,30 @@ export class Orchestrator {
       )
     }
   }
+
+  async getActiveServices(): Promise<Array<{ serviceId: string; name: string; pubkey: string; endpoint: string; healthy: boolean }>> {
+    const results = []
+    for (const service of this.config.services) {
+      const client = this.serviceClients.get(service.serviceId)
+      let healthy = false
+      
+      if (client) {
+        try {
+          await client.healthCheck()
+          healthy = true
+        } catch (err) {
+          healthy = false
+        }
+      }
+
+      results.push({
+        serviceId: service.serviceId,
+        name: service.name,
+        pubkey: service.pubkey,
+        endpoint: service.endpoint,
+        healthy
+      })
+    }
+    return results
+  }
 }
