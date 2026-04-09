@@ -120,8 +120,20 @@ export class HttpServer {
       
       if (userPubkey) {
         const subscriptions = await this.orchestrator.getStore.getSubscriptionsByUser(userPubkey)
+        
+        // SECURITY: Never expose private keys to clients
+        const safeSubscriptions = subscriptions.map(sub => ({
+          id: sub.id,
+          userPubkey: sub.userPubkey,
+          subscriptionPubkey: sub.subscriptionPubkey,
+          status: sub.status,
+          allowedServices: sub.allowedServices,
+          createdAt: sub.createdAt,
+          expiresAt: sub.expiresAt,
+        }))
+        
         res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ subscriptions }))
+        res.end(JSON.stringify({ subscriptions: safeSubscriptions }))
       } else {
         res.writeHead(400, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ error: 'userPubkey query parameter required' }))
@@ -145,8 +157,20 @@ export class HttpServer {
       }
 
       const subscription = await this.keyManager.createSubscription(userPubkey, allowedServices)
+      
+      // SECURITY: Never expose private key to clients
+      const safeSubscription = {
+        id: subscription.id,
+        userPubkey: subscription.userPubkey,
+        subscriptionPubkey: subscription.subscriptionPubkey,
+        status: subscription.status,
+        allowedServices: subscription.allowedServices,
+        createdAt: subscription.createdAt,
+        expiresAt: subscription.expiresAt,
+      }
+      
       res.writeHead(201, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ subscription }))
+      res.end(JSON.stringify({ subscription: safeSubscription }))
     } catch (err) {
       console.error('[http] error creating subscription:', err)
       res.writeHead(500, { 'Content-Type': 'application/json' })
@@ -170,8 +194,19 @@ export class HttpServer {
         return
       }
 
+      // SECURITY: Never expose private key to clients
+      const safeSubscription = {
+        id: subscription.id,
+        userPubkey: subscription.userPubkey,
+        subscriptionPubkey: subscription.subscriptionPubkey,
+        status: subscription.status,
+        allowedServices: subscription.allowedServices,
+        createdAt: subscription.createdAt,
+        expiresAt: subscription.expiresAt,
+      }
+
       res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ subscription }))
+      res.end(JSON.stringify({ subscription: safeSubscription }))
     } catch (err) {
       console.error('[http] error getting subscription:', err)
       res.writeHead(500, { 'Content-Type': 'application/json' })
