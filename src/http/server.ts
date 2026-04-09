@@ -39,16 +39,16 @@ export class HttpServer {
       return
     }
 
-    const url = req.url || ''
     const method = req.method || ''
+    const pathname = (req.url || '').split('?')[0]
 
     // Public endpoints
-    if (url === '/health' && method === 'GET') {
+    if (pathname === '/health' && method === 'GET') {
       this.handleHealth(res)
       return
     }
 
-    if (url === '/services' && method === 'GET') {
+    if (pathname === '/services' && method === 'GET') {
       void this.handleServices(res)
       return
     }
@@ -61,17 +61,17 @@ export class HttpServer {
     }
 
     // Subscription routes
-    if (url === '/subscriptions' && method === 'GET') {
+    if (pathname === '/subscriptions' && method === 'GET') {
       void this.handleListSubscriptions(req, res)
-    } else if (url === '/subscriptions' && method === 'POST') {
+    } else if (pathname === '/subscriptions' && method === 'POST') {
       void this.handleCreateSubscription(req, res)
-    } else if (url.match(/^\/subscriptions\/[^/]+$/) && method === 'GET') {
+    } else if (pathname.match(/^\/subscriptions\/[^/]+$/) && method === 'GET') {
       void this.handleGetSubscription(req, res)
-    } else if (url.match(/^\/subscriptions\/[^/]+$/) && method === 'PATCH') {
+    } else if (pathname.match(/^\/subscriptions\/[^/]+$/) && method === 'PATCH') {
       void this.handleUpdateSubscription(req, res)
-    } else if (url.match(/^\/subscriptions\/[^/]+$/) && method === 'DELETE') {
+    } else if (pathname.match(/^\/subscriptions\/[^/]+$/) && method === 'DELETE') {
       void this.handleDeleteSubscription(req, res)
-    } else if (url.match(/^\/subscriptions\/[^/]+\/request-keys$/) && method === 'POST') {
+    } else if (pathname.match(/^\/subscriptions\/[^/]+\/request-keys$/) && method === 'POST') {
       void this.handleCreateRequestKey(req, res)
     } else {
       res.writeHead(404, { 'Content-Type': 'application/json' })
