@@ -20,6 +20,8 @@ export interface OrchestratorStore {
 
   createRequestKey(reqKey: NewRequestKey): Promise<RequestKey>
   getRequestKeyByPubkey(pubkey: string): Promise<RequestKey | null>
+  listUnusedRequestKeyPubkeys(): Promise<string[]>
+  markRequestKeyAsUsed(id: string, eventId: string): Promise<void>
 
   // ── Authorization ────────────────────────────────────────────────────────
 

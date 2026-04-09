@@ -33,7 +33,7 @@ export class SqliteStore implements OrchestratorStore {
         expires_at INTEGER
       );
 
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_user
+      CREATE INDEX IF NOT EXISTS idx_subscriptions_user_lookup
         ON subscriptions(user_pubkey);
       CREATE INDEX IF NOT EXISTS idx_subscriptions_pubkey
         ON subscriptions(subscription_pubkey);
@@ -44,6 +44,8 @@ export class SqliteStore implements OrchestratorStore {
         request_pubkey TEXT NOT NULL UNIQUE,
         request_privkey TEXT NOT NULL,
         request_event_id TEXT,
+        used INTEGER NOT NULL DEFAULT 0,
+        used_at INTEGER,
         created_at INTEGER NOT NULL,
         expires_at INTEGER,
         FOREIGN KEY (subscription_id) REFERENCES subscriptions(id)
@@ -51,6 +53,8 @@ export class SqliteStore implements OrchestratorStore {
 
       CREATE INDEX IF NOT EXISTS idx_request_keys_pubkey
         ON request_keys(request_pubkey);
+      CREATE INDEX IF NOT EXISTS idx_request_keys_unused
+        ON request_keys(used) WHERE used = 0;
     `)
   }
 
@@ -146,6 +150,8 @@ export class SqliteStore implements OrchestratorStore {
       requestPubkey,
       requestPrivkey,
       requestEventId,
+      used: false,
+      usedAt: null,
       createdAt,
       expiresAt,
     }
@@ -156,6 +162,23 @@ export class SqliteStore implements OrchestratorStore {
       'SELECT * FROM request_keys WHERE request_pubkey = ?',
     ).get(pubkey) as RequestKeyRow | undefined
     return row ? mapRequestKey(row) : null
+  }
+
+  async listUnusedRequestKeyPubkeys(): Promise<string[]> {
+    const now = Math.floor(Date.now() / 1000)
+    const rows = this.db.prepare(
+      `SELECT request_pubkey FROM request_keys 
+       WHERE used = 0 
+       AND (expires_at IS NULL OR expires_at > ?)`,
+    ).all(now) as Array<{ request_pubkey: string }>
+    return rows.map(r => r.request_pubkey)
+  }
+
+  async markRequestKeyAsUsed(id: string, eventId: string): Promise<void> {
+    const now = Math.floor(Date.now() / 1000)
+    this.db.prepare(
+      'UPDATE request_keys SET used = 1, used_at = ?, request_event_id = ? WHERE id = ?'
+    ).run(now, eventId, id)
   }
 
   // ── Authorization ──────────────────────────────────────────────────────
@@ -199,6 +222,8 @@ interface RequestKeyRow {
   request_pubkey: string
   request_privkey: string
   request_event_id: string | null
+  used: number
+  used_at: number | null
   created_at: number
   expires_at: number | null
 }
@@ -223,6 +248,8 @@ function mapRequestKey(row: RequestKeyRow): RequestKey {
     requestPubkey: row.request_pubkey,
     requestPrivkey: row.request_privkey,
     requestEventId: row.request_event_id,
+    used: row.used === 1,
+    usedAt: row.used_at,
     createdAt: row.created_at,
     expiresAt: row.expires_at,
   }

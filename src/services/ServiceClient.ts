@@ -34,30 +34,24 @@ export class ServiceClient {
   }
 
   async *streamRequest(event: NostrEvent, serviceId: string): AsyncGenerator<UnsignedEvent> {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
-
+    // No timeout for streaming requests - SSE keeps connection alive with event stream
+    // and long calculations (with many iterations) can take 30+ minutes
     const payload: ForwardPayload = { event, serviceId }
 
-    try {
-      const response = await fetch(`${this.endpoint}/tsm/request`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'text/event-stream',
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      })
+    const response = await fetch(`${this.endpoint}/tsm/request`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
+      },
+      body: JSON.stringify(payload),
+    })
 
-      if (!response.ok) {
-        throw new Error(`POST /tsm/request returned HTTP ${response.status}`)
-      }
-
-      yield* readSSEStream(response)
-    } finally {
-      clearTimeout(timeout)
+    if (!response.ok) {
+      throw new Error(`POST /tsm/request returned HTTP ${response.status}`)
     }
+
+    yield* readSSEStream(response)
   }
 
   async healthCheck(): Promise<boolean> {

@@ -29,9 +29,9 @@ function parseServiceConfigs(): ServiceRecord[] {
     const serviceId = process.env[`${prefix}SERVICE_ID`]
     if (!serviceId) throw new Error(`${prefix}SERVICE_ID is required`)
 
-    const pubkeyMode = (process.env[`${prefix}PUBKEY_MODE`] ?? 'service') as PubkeyMode
-    if (!['service', 'subscription', 'request'].includes(pubkeyMode)) {
-      throw new Error(`${prefix}PUBKEY_MODE must be one of: service, subscription, request`)
+    const pubkeyMode = (process.env[`${prefix}PUBKEY_MODE`] ?? 'public_service') as PubkeyMode
+    if (!['public_service', 'subscription_service', 'restricted_service'].includes(pubkeyMode)) {
+      throw new Error(`${prefix}PUBKEY_MODE must be one of: public_service, subscription_service, restricted_service`)
     }
 
     const pubkey = getPublicKey(hexToBytes(privkey))

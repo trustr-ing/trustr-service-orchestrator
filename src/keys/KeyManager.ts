@@ -39,4 +39,8 @@ export class KeyManager {
   async listActiveSubscriptionPubkeys(): Promise<string[]> {
     return this.store.listActiveSubscriptionPubkeys()
   }
+
+  async listUnusedRequestKeyPubkeys(): Promise<string[]> {
+    return this.store.listUnusedRequestKeyPubkeys()
+  }
 }

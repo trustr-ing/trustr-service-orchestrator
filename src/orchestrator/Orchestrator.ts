@@ -84,10 +84,11 @@ export class Orchestrator {
     for (const service of this.config.services) {
       const allPubkeys = [service.pubkey]
 
-      // In subscription/request mode, also listen for subscription pubkeys
-      if (service.pubkeyMode === 'subscription' || service.pubkeyMode === 'request') {
+      // In subscription_service/restricted_service mode, also listen for managed pubkeys
+      if (service.pubkeyMode === 'subscription_service' || service.pubkeyMode === 'restricted_service') {
         const subPubkeys = await this.keyManager.listActiveSubscriptionPubkeys()
-        allPubkeys.push(...subPubkeys)
+        const reqPubkeys = await this.store.listUnusedRequestKeyPubkeys()
+        allPubkeys.push(...subPubkeys, ...reqPubkeys)
       }
 
       const subscriptionId = `tsm:${service.serviceId}`
@@ -136,5 +137,13 @@ export class Orchestrator {
       })
     }
     return results
+  }
+
+  get getStore(): OrchestratorStore {
+    return this.store
+  }
+
+  get getKeyManager(): KeyManager {
+    return this.keyManager
   }
 }

@@ -9,18 +9,18 @@ export class KeyResolver {
   ) {}
 
   async resolve(pTagPubkey: string, requestAuthorPubkey: string): Promise<SigningContext | null> {
-    // 1. Check if p-tag matches a service pubkey (service mode)
+    // 1. Check if p-tag matches a service pubkey (public_service mode)
     const serviceMatch = this.services.find(s => s.pubkey === pTagPubkey)
     if (serviceMatch) {
       return {
         privkey: hexToBytes(serviceMatch.privkey),
         pubkey: serviceMatch.pubkey,
         serviceRecord: serviceMatch,
-        mode: 'service',
+        mode: 'public_service',
       }
     }
 
-    // 2. Check if p-tag matches a subscription pubkey
+    // 2. Check if p-tag matches a subscription pubkey (subscription_service mode)
     const subscription = await this.keyManager.getSubscriptionByPubkey(pTagPubkey)
     if (subscription) {
       if (subscription.status !== 'active') return null
@@ -33,11 +33,11 @@ export class KeyResolver {
         privkey: hexToBytes(subscription.subscriptionPrivkey),
         pubkey: subscription.subscriptionPubkey,
         serviceRecord,
-        mode: 'subscription',
+        mode: 'subscription_service',
       }
     }
 
-    // 3. Check if p-tag matches a request pubkey
+    // 3. Check if p-tag matches a request pubkey (restricted_service mode)
     const requestKey = await this.keyManager.getRequestKeyByPubkey(pTagPubkey)
     if (requestKey) {
       const parentSubscription = await this.keyManager.getSubscription(requestKey.subscriptionId)
@@ -52,7 +52,7 @@ export class KeyResolver {
         privkey: hexToBytes(requestKey.requestPrivkey),
         pubkey: requestKey.requestPubkey,
         serviceRecord,
-        mode: 'request',
+        mode: 'restricted_service',
       }
     }
 

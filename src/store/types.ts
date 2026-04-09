@@ -19,7 +19,7 @@ export interface UnsignedEvent {
 
 // ── Provider pubkey modes (TSM spec Appendix 2) ─────────────────────────────
 
-export type PubkeyMode = 'service' | 'subscription' | 'request'
+export type PubkeyMode = 'public_service' | 'subscription_service' | 'restricted_service'
 
 // ── Service configuration (loaded from ENV) ──────────────────────────────────
 
@@ -66,6 +66,8 @@ export interface RequestKey {
   requestPubkey: string
   requestPrivkey: string
   requestEventId: string | null
+  used: boolean
+  usedAt: number | null
   createdAt: number
   expiresAt: number | null
 }

@@ -97,15 +97,52 @@ export class RequestPipeline {
       return
     }
 
-    // 6. In service mode, additionally check subscriber authorization
-    if (signingContext.mode === 'service') {
+    // 6. Authorization checks based on mode
+    // public_service → no authorization required (open access)
+
+    if (signingContext.mode === 'subscription_service') {
       const authorized = await this.store.isAuthorized(event.pubkey, signingContext.serviceRecord.serviceId)
       if (!authorized) {
         console.log(
-          `[pipeline] rejected request ${event.id.slice(0, 8)}... — author ${event.pubkey.slice(0, 8)}... not authorized for ${signingContext.serviceRecord.serviceId}`,
+          `[pipeline] rejected request ${event.id.slice(0, 8)}... — author ${event.pubkey.slice(0, 8)}... not subscribed to ${signingContext.serviceRecord.serviceId}`,
         )
         return
       }
+    }
+
+    if (signingContext.mode === 'restricted_service') {
+      const requestKey = await this.store.getRequestKeyByPubkey(signingContext.pubkey)
+      if (!requestKey || requestKey.used) {
+        console.log(
+          `[pipeline] rejected request ${event.id.slice(0, 8)}... — restricted key ${signingContext.pubkey.slice(0, 8)}... already used or invalid`,
+        )
+        return
+      }
+
+      if (requestKey.expiresAt && requestKey.expiresAt < event.created_at) {
+        console.log(
+          `[pipeline] rejected request ${event.id.slice(0, 8)}... — restricted key ${signingContext.pubkey.slice(0, 8)}... expired`,
+        )
+        return
+      }
+
+      const subscription = await this.store.getSubscription(requestKey.subscriptionId)
+      if (!subscription || subscription.status !== 'active') {
+        console.log(
+          `[pipeline] rejected request ${event.id.slice(0, 8)}... — parent subscription inactive`,
+        )
+        return
+      }
+
+      if (subscription.userPubkey !== event.pubkey) {
+        console.log(
+          `[pipeline] rejected request ${event.id.slice(0, 8)}... — author mismatch for restricted key`,
+        )
+        return
+      }
+
+      // Mark as used BEFORE processing (prevent race conditions)
+      await this.store.markRequestKeyAsUsed(requestKey.id, event.id)
     }
 
     // 7. Verify output kind match

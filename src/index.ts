@@ -30,7 +30,7 @@ async function main(): Promise<void> {
   await orchestrator.start()
 
   // Start HTTP server
-  const httpServer = new HttpServer(httpPort, orchestrator)
+  const httpServer = new HttpServer(httpPort, orchestrator, orchestrator.getKeyManager)
   httpServer.start()
 
   const shutdown = async (): Promise<void> => {
