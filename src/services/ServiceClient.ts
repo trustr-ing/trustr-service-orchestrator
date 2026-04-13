@@ -3,8 +3,25 @@ import { readSSEStream } from './SSEStreamReader'
 
 const REQUEST_TIMEOUT_MS = 300_000
 const ANNOUNCE_TIMEOUT_MS = 15_000
+const RESUME_POLL_INTERVAL_MS = 2_000
+const RESUME_CHECK_TIMEOUT_MS = 3_000
+
+interface BufferedEventsResponse {
+  requestId: string
+  events: UnsignedEvent[]
+  cursor: number
+  completed: boolean
+  totalEvents: number
+  hasMore: boolean
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
 
 export class ServiceClient {
+  private supportsResume: boolean | null = null
+
   constructor(private readonly endpoint: string) {}
 
   async fetchAnnouncement(): Promise<UnsignedEvent> {
@@ -33,25 +50,119 @@ export class ServiceClient {
     }
   }
 
-  async *streamRequest(event: NostrEvent, serviceId: string): AsyncGenerator<UnsignedEvent> {
-    // No timeout for streaming requests - SSE keeps connection alive with event stream
-    // and long calculations (with many iterations) can take 30+ minutes
-    const payload: ForwardPayload = { event, serviceId }
-
-    const response = await fetch(`${this.endpoint}/tsm/request`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'text/event-stream',
-      },
-      body: JSON.stringify(payload),
-    })
-
-    if (!response.ok) {
-      throw new Error(`POST /tsm/request returned HTTP ${response.status}`)
+  private async checkResumeCapability(requestId: string): Promise<boolean> {
+    if (this.supportsResume !== null) {
+      return this.supportsResume
     }
 
-    yield* readSSEStream(response)
+    try {
+      const response = await fetch(
+        `${this.endpoint}/tsm/request/${requestId}/events?cursor=0`,
+        {
+          method: 'GET',
+          signal: AbortSignal.timeout(RESUME_CHECK_TIMEOUT_MS),
+        }
+      )
+
+      this.supportsResume = response.status === 404 || response.ok
+      return this.supportsResume
+    } catch {
+      this.supportsResume = false
+      return false
+    }
+  }
+
+  private async *pollBufferedEvents(
+    requestId: string,
+    startCursor: number
+  ): AsyncGenerator<UnsignedEvent> {
+    let cursor = startCursor
+    let completed = false
+
+    while (!completed) {
+      try {
+        const response = await fetch(
+          `${this.endpoint}/tsm/request/${requestId}/events?cursor=${cursor}`
+        )
+
+        if (!response.ok) {
+          if (response.status === 404) {
+            console.log(`[client] request ${requestId.slice(0, 8)}... not found in buffer, ending poll`)
+            break
+          }
+          throw new Error(`Resume endpoint returned HTTP ${response.status}`)
+        }
+
+        const data = (await response.json()) as BufferedEventsResponse
+
+        for (const event of data.events) {
+          yield event
+        }
+
+        cursor = data.cursor
+        completed = data.completed
+
+        if (!completed && data.events.length === 0) {
+          await sleep(RESUME_POLL_INTERVAL_MS)
+        }
+      } catch (err) {
+        console.error(`[client] polling error for ${requestId.slice(0, 8)}...:`, err)
+        await sleep(RESUME_POLL_INTERVAL_MS)
+      }
+    }
+
+    console.log(`[client] polling complete for ${requestId.slice(0, 8)}... at cursor ${cursor}`)
+  }
+
+  async *streamRequest(event: NostrEvent, serviceId: string): AsyncGenerator<UnsignedEvent> {
+    const payload: ForwardPayload = { event, serviceId }
+    let cursor = 0
+    let sseAttempted = false
+
+    try {
+      const response = await fetch(`${this.endpoint}/tsm/request`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
+        },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        throw new Error(`POST /tsm/request returned HTTP ${response.status}`)
+      }
+
+      sseAttempted = true
+
+      for await (const unsignedEvent of readSSEStream(response)) {
+        yield unsignedEvent
+        cursor++
+      }
+
+      console.log(`[client] SSE stream completed normally for ${event.id.slice(0, 8)}...`)
+    } catch (sseError) {
+      const errorMsg = sseError instanceof Error ? sseError.message : String(sseError)
+      console.log(
+        `[client] SSE ${sseAttempted ? 'interrupted' : 'failed'} for ${event.id.slice(0, 8)}... after ${cursor} events: ${errorMsg}`
+      )
+
+      const canResume = await this.checkResumeCapability(event.id)
+
+      if (canResume && cursor > 0) {
+        console.log(
+          `[client] service supports resume, polling buffered events from cursor ${cursor}`
+        )
+        yield* this.pollBufferedEvents(event.id, cursor)
+      } else if (!canResume) {
+        console.log(
+          `[client] service does not support resume API, events after cursor ${cursor} are lost`
+        )
+        throw sseError
+      } else {
+        throw sseError
+      }
+    }
   }
 
   async healthCheck(): Promise<boolean> {
