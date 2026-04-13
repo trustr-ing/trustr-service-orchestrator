@@ -48,13 +48,17 @@ export class HttpServer {
       return
     }
 
-    if (pathname === '/services' && method === 'GET') {
+    if (pathname === '/api/services' && method === 'GET') {
       void this.handleServices(res)
       return
     }
 
     // VPC-only endpoints for subscription management
-    if (!this.isVpcRequest(req)) {
+    // Note: /api/services is made public for dashboard access
+    const vpcOnlyEndpoints = ['/api/subscription', '/api/subscriptions']
+    const isVpcEndpoint = vpcOnlyEndpoints.some(ep => pathname.startsWith(ep))
+    
+    if (isVpcEndpoint && !this.isVpcRequest(req)) {
       res.writeHead(403, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: 'Access restricted to VPC only' }))
       return
