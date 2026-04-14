@@ -4,7 +4,7 @@ import { readSSEStream } from './SSEStreamReader'
 const REQUEST_TIMEOUT_MS = 300_000
 const ANNOUNCE_TIMEOUT_MS = 15_000
 const RESUME_POLL_INTERVAL_MS = 2_000
-const RESUME_CHECK_TIMEOUT_MS = 3_000
+const RESUME_CHECK_TIMEOUT_MS = 10_000
 
 interface BufferedEventsResponse {
   requestId: string
@@ -64,11 +64,16 @@ export class ServiceClient {
         }
       )
 
+      // Assume resume is supported if endpoint exists (404 or OK)
+      // Only fail if we get a 404 for a completed request
       this.supportsResume = response.status === 404 || response.ok
       return this.supportsResume
-    } catch {
-      this.supportsResume = false
-      return false
+    } catch (err) {
+      // If timeout or network error, assume resume is supported
+      // Better to try resume and fail than to give up immediately
+      console.log(`[client] resume check timed out for ${requestId.slice(0, 8)}..., assuming resume is supported`)
+      this.supportsResume = true
+      return true
     }
   }
 
