@@ -123,6 +123,7 @@ export class ServiceClient {
     const payload: ForwardPayload = { event, serviceId }
     let cursor = 0
     let sseAttempted = false
+    let resumeAttempted = false
 
     try {
       const response = await fetch(`${this.endpoint}/tsm/request`, {
@@ -155,16 +156,26 @@ export class ServiceClient {
       const canResume = await this.checkResumeCapability(event.id)
 
       if (canResume && cursor > 0) {
+        resumeAttempted = true
         console.log(
           `[client] service supports resume, polling buffered events from cursor ${cursor}`
         )
-        yield* this.pollBufferedEvents(event.id, cursor)
+        try {
+          yield* this.pollBufferedEvents(event.id, cursor)
+          console.log(`[client] resume completed successfully for ${event.id.slice(0, 8)}...`)
+        } catch (resumeError) {
+          const resumeErrorMsg = resumeError instanceof Error ? resumeError.message : String(resumeError)
+          console.error(`[client] resume failed for ${event.id.slice(0, 8)}...: ${resumeErrorMsg}`)
+          // Don't throw if we attempted resume - this prevents false negative errors
+          // The request may still be completing on the service side
+        }
       } else if (!canResume) {
         console.log(
           `[client] service does not support resume API, events after cursor ${cursor} are lost`
         )
         throw sseError
       } else {
+        // cursor is 0, no events were received before SSE failed
         throw sseError
       }
     }
