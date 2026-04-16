@@ -188,8 +188,18 @@ export class RequestPipeline {
     let outputEventCount = 0
 
     try {
+      const defaultReadRelays = [
+        ...new Set([...service.listenRelays, ...service.publishRelays]),
+      ]
+      const defaultWriteRelays = [...service.publishRelays]
+
       // Stream unsigned events from the service module
-      for await (const unsignedEvent of client.streamRequest(event, service.serviceId)) {
+      for await (const unsignedEvent of client.streamRequest(
+        event,
+        service.serviceId,
+        defaultReadRelays,
+        defaultWriteRelays,
+      )) {
         await this.publisher.signAndPublish(unsignedEvent, ctx.privkey, publishRelays)
 
         if (unsignedEvent.kind !== 7000) {

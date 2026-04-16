@@ -119,8 +119,18 @@ export class ServiceClient {
     console.log(`[client] polling complete for ${requestId.slice(0, 8)}... at cursor ${cursor}`)
   }
 
-  async *streamRequest(event: NostrEvent, serviceId: string): AsyncGenerator<UnsignedEvent> {
-    const payload: ForwardPayload = { event, serviceId }
+  async *streamRequest(
+    event: NostrEvent,
+    serviceId: string,
+    defaultReadRelays?: string[],
+    defaultWriteRelays?: string[],
+  ): AsyncGenerator<UnsignedEvent> {
+    const payload: ForwardPayload = {
+      event,
+      serviceId,
+      defaultReadRelays,
+      defaultWriteRelays,
+    }
     let cursor = 0
     let sseAttempted = false
     let resumeAttempted = false

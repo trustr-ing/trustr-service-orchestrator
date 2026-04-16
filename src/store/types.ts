@@ -83,6 +83,8 @@ export interface NewRequestKey {
 export interface ForwardPayload {
   event: NostrEvent
   serviceId: string
+  defaultReadRelays?: string[]
+  defaultWriteRelays?: string[]
 }
 
 // ── Resolved signing context for a request ───────────────────────────────────
