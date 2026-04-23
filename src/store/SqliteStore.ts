@@ -9,6 +9,7 @@ import type {
   RequestKey,
   NewRequestKey,
   SubscriptionStatus,
+  RequestDurationStat,
 } from './types'
 
 export class SqliteStore implements OrchestratorStore {
@@ -55,6 +56,18 @@ export class SqliteStore implements OrchestratorStore {
         ON request_keys(request_pubkey);
       CREATE INDEX IF NOT EXISTS idx_request_keys_unused
         ON request_keys(used) WHERE used = 0;
+
+      CREATE TABLE IF NOT EXISTS request_duration_stats (
+        service_id TEXT NOT NULL,
+        profile_key TEXT NOT NULL,
+        sample_count INTEGER NOT NULL,
+        ewma_duration_ms REAL NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (service_id, profile_key)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_request_duration_stats_service
+        ON request_duration_stats(service_id);
     `)
   }
 
@@ -196,6 +209,66 @@ export class SqliteStore implements OrchestratorStore {
     return false
   }
 
+  // ── Request duration stats ───────────────────────────────────────────────
+
+  async getRequestDurationStat(serviceId: string, profileKey: string): Promise<RequestDurationStat | null> {
+    const row = this.db.prepare(
+      'SELECT * FROM request_duration_stats WHERE service_id = ? AND profile_key = ?',
+    ).get(serviceId, profileKey) as RequestDurationStatRow | undefined
+
+    return row ? mapRequestDurationStat(row) : null
+  }
+
+  async recordRequestDurationStat(
+    serviceId: string,
+    profileKey: string,
+    durationMs: number,
+    alpha: number,
+  ): Promise<RequestDurationStat> {
+    const now = Math.floor(Date.now() / 1000)
+    const boundedDurationMs = Math.max(1, Math.round(durationMs))
+    const boundedAlpha = Math.min(1, Math.max(0, alpha))
+
+    const existing = this.db.prepare(
+      'SELECT * FROM request_duration_stats WHERE service_id = ? AND profile_key = ?',
+    ).get(serviceId, profileKey) as RequestDurationStatRow | undefined
+
+    if (!existing) {
+      this.db.prepare(
+        `INSERT INTO request_duration_stats
+          (service_id, profile_key, sample_count, ewma_duration_ms, updated_at)
+         VALUES (?, ?, ?, ?, ?)`
+      ).run(serviceId, profileKey, 1, boundedDurationMs, now)
+
+      return {
+        serviceId,
+        profileKey,
+        sampleCount: 1,
+        ewmaDurationMs: boundedDurationMs,
+        updatedAt: now,
+      }
+    }
+
+    const nextSampleCount = existing.sample_count + 1
+    const nextEwmaDurationMs = Math.round(
+      (boundedAlpha * boundedDurationMs) + ((1 - boundedAlpha) * existing.ewma_duration_ms),
+    )
+
+    this.db.prepare(
+      `UPDATE request_duration_stats
+         SET sample_count = ?, ewma_duration_ms = ?, updated_at = ?
+       WHERE service_id = ? AND profile_key = ?`
+    ).run(nextSampleCount, nextEwmaDurationMs, now, serviceId, profileKey)
+
+    return {
+      serviceId,
+      profileKey,
+      sampleCount: nextSampleCount,
+      ewmaDurationMs: nextEwmaDurationMs,
+      updatedAt: now,
+    }
+  }
+
   // ── Lifecycle ──────────────────────────────────────────────────────────
 
   async close(): Promise<void> {
@@ -214,6 +287,14 @@ interface SubscriptionRow {
   allowed_services: string | null
   created_at: number
   expires_at: number | null
+}
+
+interface RequestDurationStatRow {
+  service_id: string
+  profile_key: string
+  sample_count: number
+  ewma_duration_ms: number
+  updated_at: number
 }
 
 interface RequestKeyRow {
@@ -238,6 +319,16 @@ function mapSubscription(row: SubscriptionRow): Subscription {
     allowedServices: row.allowed_services ? JSON.parse(row.allowed_services) : null,
     createdAt: row.created_at,
     expiresAt: row.expires_at,
+  }
+}
+
+function mapRequestDurationStat(row: RequestDurationStatRow): RequestDurationStat {
+  return {
+    serviceId: row.service_id,
+    profileKey: row.profile_key,
+    sampleCount: row.sample_count,
+    ewmaDurationMs: row.ewma_duration_ms,
+    updatedAt: row.updated_at,
   }
 }
 

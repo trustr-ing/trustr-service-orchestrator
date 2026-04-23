@@ -78,6 +78,16 @@ export interface NewRequestKey {
   expiresAt?: number
 }
 
+// ── Persisted duration stats for progress estimation ─────────────────────────
+
+export interface RequestDurationStat {
+  serviceId: string
+  profileKey: string
+  sampleCount: number
+  ewmaDurationMs: number
+  updatedAt: number
+}
+
 // ── Payload sent to service modules ──────────────────────────────────────────
 
 export interface ForwardPayload {

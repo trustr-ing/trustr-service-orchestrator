@@ -1,4 +1,4 @@
-import type { NostrEvent, ServiceRecord, SigningContext } from '../store/types'
+import type { NostrEvent, ServiceRecord, SigningContext, UnsignedEvent } from '../store/types'
 import type { KeyResolver } from '../keys/KeyResolver'
 import type { EventPublisher } from '../relay/EventPublisher'
 import type { ServiceClient } from '../services/ServiceClient'
@@ -10,6 +10,26 @@ import {
 } from '../feedback/FeedbackBuilder'
 
 const SEEN_EVENT_MAX_SIZE = 1_000
+const DEFAULT_ESTIMATED_DURATION_MS = 120_000
+const MIN_ESTIMATED_DURATION_MS = 5_000
+const PROFILE_MIN_SAMPLE_COUNT = 3
+const EWMA_ALPHA = 0.25
+const IN_FLIGHT_PROGRESS_MAX = 95
+const TERMINAL_PROGRESS = 100
+const SERVICE_FALLBACK_PROFILE_KEY = '*'
+
+interface ParsedInterpreterConfig {
+  iterate?: number
+  actorType?: string
+}
+
+interface ProgressContext {
+  startedAtMs: number
+  serviceId: string
+  profileKey: string
+  estimatedDurationMs: number
+  lastProgress: number
+}
 
 interface SeenEventRecord {
   id: string
@@ -66,6 +86,190 @@ export class RequestPipeline {
     private readonly serviceClients: Map<string, ServiceClient>,
     private readonly store: OrchestratorStore,
   ) {}
+
+  private getConfigValue(event: NostrEvent, key: string): string | undefined {
+    return event.tags.find(tag => tag[0] === 'config' && tag[1] === key)?.[2]
+  }
+
+  private parseInterpreterConfigs(rawInterpreters?: string): ParsedInterpreterConfig[] {
+    if (!rawInterpreters) return []
+
+    try {
+      const parsed = JSON.parse(rawInterpreters)
+      if (!Array.isArray(parsed)) return []
+
+      const parsedInterpreters: ParsedInterpreterConfig[] = []
+      for (const interpreter of parsed) {
+        if (!interpreter || typeof interpreter !== 'object') continue
+
+        const parsedInterpreter: ParsedInterpreterConfig = {}
+        const iterateValue = (interpreter as { iterate?: unknown }).iterate
+        if (typeof iterateValue === 'number' && Number.isFinite(iterateValue)) {
+          parsedInterpreter.iterate = Math.max(1, Math.floor(iterateValue))
+        }
+
+        const paramsValue = (interpreter as { params?: unknown }).params
+        if (paramsValue && typeof paramsValue === 'object') {
+          const actorTypeValue = (paramsValue as { actorType?: unknown }).actorType
+          if (typeof actorTypeValue === 'string' && actorTypeValue.trim()) {
+            parsedInterpreter.actorType = actorTypeValue.trim()
+          }
+        }
+
+        parsedInterpreters.push(parsedInterpreter)
+      }
+
+      return parsedInterpreters
+    } catch {
+      return []
+    }
+  }
+
+  private parsePovSize(rawPov?: string): number | null {
+    if (!rawPov) return null
+
+    try {
+      const parsed = JSON.parse(rawPov)
+      if (Array.isArray(parsed)) return parsed.length
+      if (typeof parsed === 'string' && parsed.trim()) return 1
+      return null
+    } catch {
+      const trimmedPov = rawPov.trim()
+      return trimmedPov ? 1 : null
+    }
+  }
+
+  private bucketSmallCount(value: number): string {
+    if (value <= 0) return '0'
+    if (value === 1) return '1'
+    if (value <= 2) return '2'
+    if (value <= 3) return '3'
+    if (value <= 5) return '4-5'
+    return '6+'
+  }
+
+  private bucketPovSize(value: number | null): string {
+    if (value === null || value <= 0) return 'unknown'
+    if (value === 1) return '1'
+    if (value <= 10) return '2-10'
+    if (value <= 50) return '11-50'
+    if (value <= 100) return '51-100'
+    if (value <= 500) return '101-500'
+    return '500+'
+  }
+
+  private buildRequestProfileKey(event: NostrEvent): string {
+    const typeValue = this.getConfigValue(event, 'type') || 'unknown'
+    const interpreters = this.parseInterpreterConfigs(this.getConfigValue(event, 'interpreters'))
+    const interpreterCountBucket = this.bucketSmallCount(interpreters.length)
+
+    const iterateSum = interpreters.reduce((sum, interpreter) => sum + (interpreter.iterate || 1), 0)
+    const iterateBucket = this.bucketSmallCount(iterateSum)
+
+    const hasEventActorInterpreter = interpreters.some((interpreter) => {
+      const normalizedActorType = interpreter.actorType?.toLowerCase()
+      return normalizedActorType === 'e' || normalizedActorType === 'a'
+    })
+
+    const povSize = this.parsePovSize(this.getConfigValue(event, 'pov'))
+    const povBucket = this.bucketPovSize(povSize)
+
+    return [
+      `type=${typeValue}`,
+      `interpreters=${interpreterCountBucket}`,
+      `iterations=${iterateBucket}`,
+      `eventActor=${hasEventActorInterpreter ? 1 : 0}`,
+      `povCount=${povBucket}`,
+    ].join('|')
+  }
+
+  private normalizeEstimatedDurationMs(durationMs: number): number {
+    if (!Number.isFinite(durationMs) || durationMs <= 0) {
+      return DEFAULT_ESTIMATED_DURATION_MS
+    }
+
+    return Math.max(MIN_ESTIMATED_DURATION_MS, Math.round(durationMs))
+  }
+
+  private async resolveEstimatedDurationMs(serviceId: string, profileKey: string): Promise<number> {
+    const profileStat = await this.store.getRequestDurationStat(serviceId, profileKey)
+    if (profileStat && profileStat.sampleCount >= PROFILE_MIN_SAMPLE_COUNT) {
+      return this.normalizeEstimatedDurationMs(profileStat.ewmaDurationMs)
+    }
+
+    const serviceFallbackStat = await this.store.getRequestDurationStat(serviceId, SERVICE_FALLBACK_PROFILE_KEY)
+    if (serviceFallbackStat) {
+      return this.normalizeEstimatedDurationMs(serviceFallbackStat.ewmaDurationMs)
+    }
+
+    return DEFAULT_ESTIMATED_DURATION_MS
+  }
+
+  private computeProgressValue(progressContext: ProgressContext, isTerminal: boolean): number {
+    if (isTerminal) {
+      progressContext.lastProgress = TERMINAL_PROGRESS
+      return TERMINAL_PROGRESS
+    }
+
+    const elapsedMs = Date.now() - progressContext.startedAtMs
+    const rawProgress = Math.floor((elapsedMs / progressContext.estimatedDurationMs) * 100)
+    const boundedProgress = Math.max(0, Math.min(IN_FLIGHT_PROGRESS_MAX, rawProgress))
+    const nextProgress = Math.max(progressContext.lastProgress, boundedProgress)
+
+    progressContext.lastProgress = nextProgress
+    return nextProgress
+  }
+
+  private withProgressTag(unsignedEvent: UnsignedEvent, progressValue: number): UnsignedEvent {
+    const nextTags = unsignedEvent.tags.map((tag) => [...tag])
+    const progressTagIndex = nextTags.findIndex((tag) => tag[0] === 'progress')
+    const normalizedProgress = String(progressValue)
+
+    if (progressTagIndex >= 0) {
+      nextTags[progressTagIndex] = ['progress', normalizedProgress]
+    } else {
+      nextTags.push(['progress', normalizedProgress])
+    }
+
+    return {
+      ...unsignedEvent,
+      tags: nextTags,
+    }
+  }
+
+  private decorateFeedbackProgress(
+    unsignedEvent: UnsignedEvent,
+    progressContext: ProgressContext,
+    isTerminal: boolean,
+  ): UnsignedEvent {
+    if (unsignedEvent.kind !== 7000) return unsignedEvent
+
+    const progressValue = this.computeProgressValue(progressContext, isTerminal)
+    return this.withProgressTag(unsignedEvent, progressValue)
+  }
+
+  private async publishWithProgress(
+    unsignedEvent: UnsignedEvent,
+    ctx: SigningContext,
+    publishRelays: string[],
+    progressContext: ProgressContext,
+    isTerminalFeedback = false,
+  ): Promise<void> {
+    const decoratedEvent = this.decorateFeedbackProgress(unsignedEvent, progressContext, isTerminalFeedback)
+    await this.publisher.signAndPublish(decoratedEvent, ctx.privkey, publishRelays)
+  }
+
+  private async recordDurationStats(serviceId: string, profileKey: string, durationMs: number): Promise<void> {
+    try {
+      await this.store.recordRequestDurationStat(serviceId, profileKey, durationMs, EWMA_ALPHA)
+      await this.store.recordRequestDurationStat(serviceId, SERVICE_FALLBACK_PROFILE_KEY, durationMs, EWMA_ALPHA)
+    } catch (error) {
+      console.error(
+        `[pipeline] failed to record duration stats for ${serviceId} (${profileKey}):`,
+        error,
+      )
+    }
+  }
 
   async handleRequestEvent(event: NostrEvent, relayUrl: string): Promise<void> {
     // 1. Deduplication / replaceable event handling
@@ -181,9 +385,18 @@ export class RequestPipeline {
       return
     }
 
+    const profileKey = this.buildRequestProfileKey(event)
+    const progressContext: ProgressContext = {
+      startedAtMs: Date.now(),
+      serviceId: service.serviceId,
+      profileKey,
+      estimatedDurationMs: await this.resolveEstimatedDurationMs(service.serviceId, profileKey),
+      lastProgress: 0,
+    }
+
     // Publish orchestrator "request received" feedback
     const receivedFeedback = requestReceivedFeedback(event, service.serviceId, ctx.pubkey)
-    await this.publisher.signAndPublish(receivedFeedback, ctx.privkey, publishRelays)
+    await this.publishWithProgress(receivedFeedback, ctx, publishRelays, progressContext)
 
     let outputEventCount = 0
 
@@ -200,7 +413,7 @@ export class RequestPipeline {
         defaultReadRelays,
         defaultWriteRelays,
       )) {
-        await this.publisher.signAndPublish(unsignedEvent, ctx.privkey, publishRelays)
+        await this.publishWithProgress(unsignedEvent, ctx, publishRelays, progressContext)
 
         if (unsignedEvent.kind !== 7000) {
           outputEventCount++
@@ -209,7 +422,10 @@ export class RequestPipeline {
 
       // Publish orchestrator "request completed" feedback
       const completedFeedback = requestCompletedFeedback(event, service.serviceId, ctx.pubkey, outputEventCount)
-      await this.publisher.signAndPublish(completedFeedback, ctx.privkey, publishRelays)
+      await this.publishWithProgress(completedFeedback, ctx, publishRelays, progressContext, true)
+
+      const durationMs = Date.now() - progressContext.startedAtMs
+      await this.recordDurationStats(service.serviceId, profileKey, durationMs)
 
       console.log(
         `[pipeline] completed request ${event.id.slice(0, 8)}... — ${outputEventCount} output event(s)`,
@@ -220,7 +436,7 @@ export class RequestPipeline {
 
       const errorFeedback = requestErrorFeedback(event, service.serviceId, ctx.pubkey, message)
       try {
-        await this.publisher.signAndPublish(errorFeedback, ctx.privkey, publishRelays)
+        await this.publishWithProgress(errorFeedback, ctx, publishRelays, progressContext, true)
       } catch (publishErr) {
         console.error('[pipeline] failed to publish error feedback:', publishErr)
       }

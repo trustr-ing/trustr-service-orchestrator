@@ -4,6 +4,7 @@ import type {
   RequestKey,
   NewRequestKey,
   SubscriptionStatus,
+  RequestDurationStat,
 } from './types'
 
 export interface OrchestratorStore {
@@ -26,6 +27,16 @@ export interface OrchestratorStore {
   // ── Authorization ────────────────────────────────────────────────────────
 
   isAuthorized(userPubkey: string, serviceId: string): Promise<boolean>
+
+  // ── Request duration stats ───────────────────────────────────────────────
+
+  getRequestDurationStat(serviceId: string, profileKey: string): Promise<RequestDurationStat | null>
+  recordRequestDurationStat(
+    serviceId: string,
+    profileKey: string,
+    durationMs: number,
+    alpha: number,
+  ): Promise<RequestDurationStat>
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
 
