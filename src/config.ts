@@ -61,7 +61,50 @@ function parseServiceConfigs(): ServiceRecord[] {
     index++
   }
 
+  const assertions = parseAssertionsServiceConfig()
+  if (assertions) services.push(assertions)
+
   return services
+}
+
+export const ASSERTIONS_INTERNAL_ENDPOINT = 'internal:assertions'
+export const ASSERTIONS_SERVICE_ID = 'assertions'
+
+/**
+ * The TSM Assertions service is handled internally by the orchestrator (placeholder
+ * implementation) rather than dispatched to a separate HTTP backend. It is enabled
+ * by setting TSM_ASSERTIONS_PRIVKEY in the environment. The endpoint sentinel
+ * `internal:assertions` signals the Orchestrator to instantiate AssertionsClient
+ * in place of the HTTP-backed ServiceClient.
+ */
+function parseAssertionsServiceConfig(): ServiceRecord | null {
+  const privkey = process.env['TSM_ASSERTIONS_PRIVKEY']
+  if (!privkey) return null
+
+  const listenRelays = parseCommaSeparated(process.env['TSM_ASSERTIONS_LISTEN_RELAYS'])
+  if (listenRelays.length === 0) {
+    throw new Error('TSM_ASSERTIONS_LISTEN_RELAYS is required when TSM_ASSERTIONS_PRIVKEY is set')
+  }
+
+  const publishRelays = parseCommaSeparated(process.env['TSM_ASSERTIONS_PUBLISH_RELAYS'])
+  if (publishRelays.length === 0) {
+    throw new Error('TSM_ASSERTIONS_PUBLISH_RELAYS is required when TSM_ASSERTIONS_PRIVKEY is set')
+  }
+
+  const pubkey = getPublicKey(hexToBytes(privkey))
+
+  return {
+    id: 'service_assertions',
+    name: process.env['TSM_ASSERTIONS_NAME'] ?? 'Trustr Assertions',
+    endpoint: ASSERTIONS_INTERNAL_ENDPOINT,
+    serviceId: ASSERTIONS_SERVICE_ID,
+    pubkeyMode: 'public_service',
+    privkey,
+    pubkey,
+    outputKinds: [37574, 37575, 37576],
+    listenRelays,
+    publishRelays,
+  }
 }
 
 export function loadConfig(): OrchestratorConfig {

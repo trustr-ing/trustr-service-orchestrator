@@ -1,7 +1,7 @@
 import type { NostrEvent, ServiceRecord, SigningContext, UnsignedEvent } from '../store/types'
 import type { KeyResolver } from '../keys/KeyResolver'
 import type { EventPublisher } from '../relay/EventPublisher'
-import type { ServiceClient } from '../services/ServiceClient'
+import type { ServiceClientLike } from './Orchestrator'
 import type { OrchestratorStore } from '../store/OrchestratorStore'
 import {
   requestReceivedFeedback,
@@ -83,7 +83,7 @@ export class RequestPipeline {
     private readonly services: ServiceRecord[],
     private readonly keyResolver: KeyResolver,
     private readonly publisher: EventPublisher,
-    private readonly serviceClients: Map<string, ServiceClient>,
+    private readonly serviceClients: Map<string, ServiceClientLike>,
     private readonly store: OrchestratorStore,
   ) {}
 

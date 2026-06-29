@@ -1,16 +1,17 @@
 import { hexToBytes } from 'nostr-tools/utils'
 import type { ServiceRecord, UnsignedEvent } from '../store/types'
 import type { EventPublisher } from '../relay/EventPublisher'
-import type { ServiceClient } from '../services/ServiceClient'
+import { ASSERTIONS_INTERNAL_ENDPOINT } from '../config'
+import type { ServiceClientLike } from './Orchestrator'
 
 export class AnnouncementManager {
-  private readonly serviceClients: Map<string, ServiceClient>
+  private readonly serviceClients: Map<string, ServiceClientLike>
   private intervalHandle: ReturnType<typeof setInterval> | null = null
 
   constructor(
     private readonly services: ServiceRecord[],
     private readonly publisher: EventPublisher,
-    serviceClients: Map<string, ServiceClient>,
+    serviceClients: Map<string, ServiceClientLike>,
   ) {
     this.serviceClients = serviceClients
   }
@@ -47,6 +48,14 @@ export class AnnouncementManager {
   }
 
   private async announceService(service: ServiceRecord): Promise<void> {
+    // Internal services (e.g. the placeholder assertions service) do not
+    // currently publish an announcement; they will once their real backend
+    // and output-standard references are in place.
+    if (service.endpoint === ASSERTIONS_INTERNAL_ENDPOINT) {
+      console.log(`[announce] skipping internal service ${service.name} (announcement deferred)`)
+      return
+    }
+
     const client = this.serviceClients.get(service.serviceId)
     if (!client) throw new Error(`No client for service ${service.serviceId}`)
 

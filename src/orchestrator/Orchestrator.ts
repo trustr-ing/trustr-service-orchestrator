@@ -1,19 +1,23 @@
 import type { OrchestratorConfig } from '../config'
+import { ASSERTIONS_INTERNAL_ENDPOINT } from '../config'
 import type { OrchestratorStore } from '../store/OrchestratorStore'
 import { RelayPool } from '../relay/RelayPool'
 import { EventPublisher } from '../relay/EventPublisher'
 import { KeyManager } from '../keys/KeyManager'
 import { KeyResolver } from '../keys/KeyResolver'
 import { ServiceClient } from '../services/ServiceClient'
+import { AssertionsClient } from '../services/assertions'
 import { AnnouncementManager } from './AnnouncementManager'
 import { RequestPipeline } from './RequestPipeline'
+
+export type ServiceClientLike = ServiceClient | AssertionsClient
 
 export class Orchestrator {
   private readonly pool: RelayPool
   private readonly publisher: EventPublisher
   private readonly keyManager: KeyManager
   private readonly keyResolver: KeyResolver
-  private readonly serviceClients: Map<string, ServiceClient>
+  private readonly serviceClients: Map<string, ServiceClientLike>
   private readonly announcementManager: AnnouncementManager
   private readonly requestPipeline: RequestPipeline
 
@@ -27,7 +31,12 @@ export class Orchestrator {
     this.keyResolver = new KeyResolver(config.services, this.keyManager)
 
     this.serviceClients = new Map(
-      config.services.map(s => [s.serviceId, new ServiceClient(s.endpoint)]),
+      config.services.map(s => [
+        s.serviceId,
+        s.endpoint === ASSERTIONS_INTERNAL_ENDPOINT
+          ? new AssertionsClient()
+          : new ServiceClient(s.endpoint),
+      ]),
     )
 
     this.announcementManager = new AnnouncementManager(
