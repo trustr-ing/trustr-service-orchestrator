@@ -55,6 +55,28 @@ export class RelayPool {
     }
   }
 
+  /**
+   * Replace the filter on an existing subscription and re-send REQ to each
+   * relay. Per NIP-01, re-sending REQ with the same `<sub_id>` replaces the
+   * relay-side filter; no CLOSE is required. If the subscription does not
+   * yet exist on a given relay, this is a no-op for that relay — callers
+   * that need a fresh subscription should use `subscribe(...)` instead.
+   */
+  updateSubscription(
+    relayUrls: string[],
+    subscriptionId: string,
+    nextFilter: Record<string, unknown>,
+  ): void {
+    for (const url of relayUrls) {
+      const conn = this.connections.get(url)
+      if (!conn) continue
+      const sub = conn.subscriptions.get(subscriptionId)
+      if (!sub) continue
+      sub.filter = nextFilter
+      this.sendReq(conn, sub)
+    }
+  }
+
   unsubscribe(relayUrls: string[], subscriptionId: string): void {
     for (const url of relayUrls) {
       const conn = this.connections.get(url)

@@ -91,6 +91,20 @@ function parseAssertionsServiceConfig(): ServiceRecord | null {
     throw new Error('TSM_ASSERTIONS_PUBLISH_RELAYS is required when TSM_ASSERTIONS_PRIVKEY is set')
   }
 
+  // The assertions service's authorization model is operator-controlled
+  // via TSM_ASSERTIONS_PUBKEY_MODE. Default remains `public_service` so
+  // upgrading the orchestrator binary alone does NOT change behavior;
+  // the R3 rollout step is setting this env var to `subscription_service`.
+  const pubkeyMode = (
+    process.env['TSM_ASSERTIONS_PUBKEY_MODE'] ?? 'public_service'
+  ) as PubkeyMode
+  if (!['public_service', 'subscription_service', 'restricted_service'].includes(pubkeyMode)) {
+    throw new Error(
+      'TSM_ASSERTIONS_PUBKEY_MODE must be one of: ' +
+      'public_service, subscription_service, restricted_service',
+    )
+  }
+
   const pubkey = getPublicKey(hexToBytes(privkey))
 
   return {
@@ -98,7 +112,7 @@ function parseAssertionsServiceConfig(): ServiceRecord | null {
     name: process.env['TSM_ASSERTIONS_NAME'] ?? 'Trustr Assertions',
     endpoint: ASSERTIONS_INTERNAL_ENDPOINT,
     serviceId: ASSERTIONS_SERVICE_ID,
-    pubkeyMode: 'public_service',
+    pubkeyMode,
     privkey,
     pubkey,
     outputKinds: [37574, 37575, 37576],

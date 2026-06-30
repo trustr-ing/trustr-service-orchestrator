@@ -8,8 +8,22 @@ export class KeyResolver {
     private readonly keyManager: KeyManager,
   ) {}
 
-  async resolve(pTagPubkey: string, requestAuthorPubkey: string): Promise<SigningContext | null> {
-    // 1. Check if p-tag matches a service pubkey (public_service mode)
+  /**
+   * Resolve the `p`-tagged pubkey on a kind-37572 request into a signing
+   * context. The optional `intendedServiceId` (extracted by the pipeline
+   * from the request's `a` tag — `37570:<svc_pubkey>:<service_id>`) is
+   * REQUIRED to disambiguate when one subscription/request pubkey is
+   * authorized for more than one service. Without it, the resolver cannot
+   * tell which `ServiceRecord` to sign with.
+   */
+  async resolve(
+    pTagPubkey: string,
+    requestAuthorPubkey: string,
+    intendedServiceId?: string,
+  ): Promise<SigningContext | null> {
+    // 1. Check if p-tag matches a service pubkey (public_service mode).
+    // The p-tag itself uniquely identifies the service here, so the
+    // intendedServiceId is ignored (and would be redundant).
     const serviceMatch = this.services.find(s => s.pubkey === pTagPubkey)
     if (serviceMatch) {
       return {
@@ -26,7 +40,10 @@ export class KeyResolver {
       if (subscription.status !== 'active') return null
       if (subscription.userPubkey !== requestAuthorPubkey) return null
 
-      const serviceRecord = this.findServiceForSubscription(subscription.allowedServices)
+      const serviceRecord = this.findServiceForSubscription(
+        subscription.allowedServices,
+        intendedServiceId,
+      )
       if (!serviceRecord) return null
 
       return {
@@ -45,7 +62,10 @@ export class KeyResolver {
       if (parentSubscription.status !== 'active') return null
       if (parentSubscription.userPubkey !== requestAuthorPubkey) return null
 
-      const serviceRecord = this.findServiceForSubscription(parentSubscription.allowedServices)
+      const serviceRecord = this.findServiceForSubscription(
+        parentSubscription.allowedServices,
+        intendedServiceId,
+      )
       if (!serviceRecord) return null
 
       return {
@@ -67,10 +87,35 @@ export class KeyResolver {
     return this.services.find(s => s.pubkey === pubkey)
   }
 
-  private findServiceForSubscription(allowedServices: string[] | null): ServiceRecord | undefined {
-    if (allowedServices === null) {
-      return this.services[0]
+  /**
+   * Pick the `ServiceRecord` that should handle a request whose addressed
+   * pubkey (subscription or request key) is authorized for `allowedServices`.
+   *
+   * Disambiguation rules:
+   *  - If the request carried an `a` tag, the pipeline passes its serviceId
+   *    as `intendedServiceId`. We use it iff the user is actually authorized
+   *    for that service (or has a wildcard subscription).
+   *  - Without an `intendedServiceId`, we only accept the resolution when
+   *    there is exactly ONE candidate; ambiguity is rejected (null) so the
+   *    pipeline returns the standard "unknown or unauthorized p-tag" error
+   *    rather than silently dispatching to an unintended service.
+   */
+  private findServiceForSubscription(
+    allowedServices: string[] | null,
+    intendedServiceId?: string,
+  ): ServiceRecord | undefined {
+    if (intendedServiceId) {
+      const wildcard = allowedServices === null
+      const authorized = wildcard || allowedServices!.includes(intendedServiceId)
+      if (!authorized) return undefined
+      return this.services.find(s => s.serviceId === intendedServiceId)
     }
-    return this.services.find(s => allowedServices.includes(s.serviceId))
+
+    const candidates =
+      allowedServices === null
+        ? this.services
+        : this.services.filter(s => allowedServices.includes(s.serviceId))
+
+    return candidates.length === 1 ? candidates[0] : undefined
   }
 }

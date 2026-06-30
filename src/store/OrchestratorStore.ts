@@ -15,6 +15,7 @@ export interface OrchestratorStore {
   getSubscriptionByPubkey(pubkey: string): Promise<Subscription | null>
   getSubscriptionsByUser(userPubkey: string): Promise<Subscription[]>
   updateSubscriptionStatus(id: string, status: SubscriptionStatus): Promise<void>
+  updateSubscriptionAllowedServices(id: string, allowedServices: string[] | null): Promise<void>
   listActiveSubscriptionPubkeys(): Promise<string[]>
 
   // ── Request keys ─────────────────────────────────────────────────────────

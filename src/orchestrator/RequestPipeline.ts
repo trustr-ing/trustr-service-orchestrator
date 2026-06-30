@@ -18,6 +18,20 @@ const IN_FLIGHT_PROGRESS_MAX = 95
 const TERMINAL_PROGRESS = 100
 const SERVICE_FALLBACK_PROFILE_KEY = '*'
 
+/**
+ * Read the service id from a kind-37572 request's `a` tag. The TSM spec
+ * format is `37570:<service_pubkey>:<service_id>`; we return the third
+ * component when the tag is present and well-formed, otherwise `undefined`.
+ */
+function extractServiceIdFromATag(event: NostrEvent): string | undefined {
+  const aTagValue = event.tags.find(t => t[0] === 'a')?.[1]
+  if (!aTagValue) return undefined
+  const parts = aTagValue.split(':')
+  if (parts.length < 3 || parts[0] !== '37570') return undefined
+  const serviceId = parts.slice(2).join(':')
+  return serviceId.length > 0 ? serviceId : undefined
+}
+
 interface ParsedInterpreterConfig {
   iterate?: number
   actorType?: string
@@ -292,8 +306,15 @@ export class RequestPipeline {
       return
     }
 
+    // 4b. Extract the intended service id from the request's `a` tag
+    // (`37570:<svc_pubkey>:<service_id>`). The resolver uses this to
+    // disambiguate when one managed pubkey is authorized for multiple
+    // services. Public-service requests don't need it (the p-tag itself
+    // uniquely identifies the service in that mode), so it's optional.
+    const intendedServiceId = extractServiceIdFromATag(event)
+
     // 5. Resolve signing context (validates p-tag → keypair)
-    const signingContext = await this.keyResolver.resolve(pTag, event.pubkey)
+    const signingContext = await this.keyResolver.resolve(pTag, event.pubkey, intendedServiceId)
     if (!signingContext) {
       console.log(
         `[pipeline] rejected request ${event.id.slice(0, 8)}... — unknown or unauthorized p-tag ${pTag.slice(0, 8)}...`,

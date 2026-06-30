@@ -133,6 +133,14 @@ export class SqliteStore implements OrchestratorStore {
     this.db.prepare('UPDATE subscriptions SET status = ? WHERE id = ?').run(status, id)
   }
 
+  async updateSubscriptionAllowedServices(
+    id: string,
+    allowedServices: string[] | null,
+  ): Promise<void> {
+    const serialized = allowedServices ? JSON.stringify(allowedServices) : null
+    this.db.prepare('UPDATE subscriptions SET allowed_services = ? WHERE id = ?').run(serialized, id)
+  }
+
   async listActiveSubscriptionPubkeys(): Promise<string[]> {
     const rows = this.db.prepare(
       "SELECT subscription_pubkey FROM subscriptions WHERE status = 'active'",

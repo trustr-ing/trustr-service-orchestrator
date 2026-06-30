@@ -85,12 +85,25 @@ export class AnnouncementManager {
       tags.unshift(['d', service.serviceId])
     }
 
-    // Set the p tag to the service pubkey (so users know where to address requests)
-    const pTagIndex = tags.findIndex(t => t[0] === 'p')
-    if (pTagIndex >= 0) {
-      tags[pTagIndex] = ['p', service.pubkey]
+    // Advertise kind-7570 messaging support per tsm/subscription-events
+    // §Advertising Support: ["p", <messaging_pubkey>, <relay?>, "7570"].
+    // We reuse the service pubkey as the messaging pubkey (the simplification
+    // approved during planning), so the messaging tag is uniquely identified
+    // by the trailing "7570" parameter — not by being the first `p` tag.
+    // Any other `p` tags the client emitted (e.g. announcement-pubkey hints
+    // for compatibility with non-TSM consumers) are preserved.
+    const messagingRelayHint = service.listenRelays[0] ?? ''
+    const messagingTag: string[] = messagingRelayHint
+      ? ['p', service.pubkey, messagingRelayHint, '7570']
+      : ['p', service.pubkey, '', '7570']
+
+    const messagingTagIndex = tags.findIndex(
+      t => t[0] === 'p' && t[3] === '7570',
+    )
+    if (messagingTagIndex >= 0) {
+      tags[messagingTagIndex] = messagingTag
     } else {
-      tags.push(['p', service.pubkey])
+      tags.push(messagingTag)
     }
 
     // Add/update relay r tags with the service's listen relays
