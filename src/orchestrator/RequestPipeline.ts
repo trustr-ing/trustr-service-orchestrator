@@ -8,6 +8,7 @@ import {
   requestCompletedFeedback,
   requestErrorFeedback,
 } from '../feedback/FeedbackBuilder'
+import { AssertionsRequestError } from '../services/assertions/parseRequest'
 
 const SEEN_EVENT_MAX_SIZE = 1_000
 const DEFAULT_ESTIMATED_DURATION_MS = 120_000
@@ -455,7 +456,23 @@ export class RequestPipeline {
       const message = err instanceof Error ? err.message : String(err)
       console.error(`[pipeline] error processing request ${event.id.slice(0, 8)}...: ${message}`)
 
-      const errorFeedback = requestErrorFeedback(event, service.serviceId, ctx.pubkey, message)
+      // Structured errors (currently AssertionsRequestError) carry a
+      // machine-readable `code` and optional `detail` that we surface as
+      // dedicated tags on the kind-7000 event, so dashboards can react
+      // programmatically without parsing the human `status` message.
+      const extraTags: string[][] = []
+      if (err instanceof AssertionsRequestError) {
+        extraTags.push(['code', err.code])
+        if (err.detail !== undefined) extraTags.push(['detail', err.detail])
+      }
+
+      const errorFeedback = requestErrorFeedback(
+        event,
+        service.serviceId,
+        ctx.pubkey,
+        message,
+        extraTags.length > 0 ? extraTags : undefined,
+      )
       try {
         await this.publishWithProgress(errorFeedback, ctx, publishRelays, progressContext, true)
       } catch (publishErr) {

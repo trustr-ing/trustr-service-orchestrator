@@ -46,7 +46,7 @@ export class Orchestrator {
       config.services.map(s => [
         s.serviceId,
         s.endpoint === ASSERTIONS_INTERNAL_ENDPOINT
-          ? new AssertionsClient()
+          ? new AssertionsClient(s.pubkey)
           : new ServiceClient(s.endpoint),
       ]),
     )

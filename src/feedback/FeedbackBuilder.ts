@@ -50,12 +50,19 @@ export function requestCompletedFeedback(requestEvent: NostrEvent, serviceId: st
   })
 }
 
-export function requestErrorFeedback(requestEvent: NostrEvent, serviceId: string, signingPubkey: string, error: string): UnsignedEvent {
+export function requestErrorFeedback(
+  requestEvent: NostrEvent,
+  serviceId: string,
+  signingPubkey: string,
+  error: string,
+  extra?: string[][],
+): UnsignedEvent {
   return buildFeedbackEvent({
     requestEvent,
     serviceId,
     signingPubkey,
     status: 'error',
     message: error,
+    extra,
   })
 }

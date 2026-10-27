@@ -115,7 +115,11 @@ function parseAssertionsServiceConfig(): ServiceRecord | null {
     pubkeyMode,
     privkey,
     pubkey,
-    outputKinds: [37574, 37575, 37576],
+    // Kinds the internal Assertions service is authorized to produce.
+    // Must stay in sync with SUPPORTED_OUTPUT_KINDS in
+    // services/assertions/parseRequest.ts so upstream `hasMatchingKind`
+    // does not silently drop otherwise-valid requests.
+    outputKinds: [37575, 30382],
     listenRelays,
     publishRelays,
   }
