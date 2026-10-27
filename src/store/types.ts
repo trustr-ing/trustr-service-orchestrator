@@ -97,6 +97,16 @@ export interface ForwardPayload {
   defaultWriteRelays?: string[]
 }
 
+// ── Processed request record (restart-safe request dedup) ────────────────────
+
+export interface ProcessedRequest {
+  /** `<author_pubkey>:<d>` for addressable requests, else the event id. */
+  key: string
+  eventId: string
+  createdAt: number
+  processedAt: number
+}
+
 // ── Resolved signing context for a request ───────────────────────────────────
 
 export interface SigningContext {

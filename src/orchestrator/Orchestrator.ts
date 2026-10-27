@@ -15,6 +15,9 @@ import { InquiryHandler } from '../subscription/InquiryHandler'
 
 export type ServiceClientLike = ServiceClient | AssertionsClient
 
+/** How far back the kind-37572 REQ filter reaches on (re)subscribe. */
+const REQUEST_REPLAY_WINDOW_SECONDS = 24 * 60 * 60
+
 // RelayPool subscription id convention for the kind-37572 request listener.
 // Kept module-local so both `subscribe(...)` and `updateSubscription(...)`
 // derive the same id from a service id.
@@ -189,6 +192,10 @@ export class Orchestrator {
     return {
       kinds: [37572],
       '#p': allPubkeys,
+      // Bound relay replay on (re)subscribe. Older requests were either
+      // processed (persisted dedup) or are stale; the pipeline's
+      // processed_requests table handles anything inside the window.
+      since: Math.floor(Date.now() / 1000) - REQUEST_REPLAY_WINDOW_SECONDS,
     }
   }
 

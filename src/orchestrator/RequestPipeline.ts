@@ -8,7 +8,10 @@ import {
   requestCompletedFeedback,
   requestErrorFeedback,
 } from '../feedback/FeedbackBuilder'
-import { AssertionsRequestError } from '../services/assertions/parseRequest'
+import { AssertionsRequestError, NIP85_OUTPUT_KINDS } from '../services/assertions/parseRequest'
+import { buildSubscriptionProviderProfile } from '../services/assertions/profiles'
+
+const NIP85_ASSERTION_KINDS = NIP85_OUTPUT_KINDS
 
 const SEEN_EVENT_MAX_SIZE = 1_000
 const DEFAULT_ESTIMATED_DURATION_MS = 120_000
@@ -52,12 +55,21 @@ interface SeenEventRecord {
   timestamp: number
 }
 
+/**
+ * Dedup key for a kind-37572 request. Addressable requests are identified
+ * by (author, d) per NIP-01, so the author MUST be part of the key: two
+ * users both sending `d=baseline_wot` are two different requests.
+ */
+function requestDedupKey(event: NostrEvent, dTag: string | null): string {
+  return dTag !== null ? `${event.pubkey}:${dTag}` : event.id
+}
+
 class SeenEventCache {
   private readonly events = new Map<string, SeenEventRecord>()
 
   shouldProcess(event: NostrEvent): boolean {
     const dTag = event.tags.find(t => t[0] === 'd')?.[1] ?? null
-    const key = dTag ?? event.id
+    const key = requestDedupKey(event, dTag)
 
     const existing = this.events.get(key)
     if (!existing) return true
@@ -76,7 +88,7 @@ class SeenEventCache {
 
   add(event: NostrEvent): void {
     const dTag = event.tags.find(t => t[0] === 'd')?.[1] ?? null
-    const key = dTag ?? event.id
+    const key = requestDedupKey(event, dTag)
 
     if (this.events.size >= SEEN_EVENT_MAX_SIZE) {
       const oldest = this.events.keys().next().value as string
@@ -287,9 +299,26 @@ export class RequestPipeline {
   }
 
   async handleRequestEvent(event: NostrEvent, relayUrl: string): Promise<void> {
-    // 1. Deduplication / replaceable event handling
+    // 1. Deduplication / replaceable event handling (in-memory, this run)
     if (!this.seenEvents.shouldProcess(event)) return
     this.seenEvents.add(event)
+
+    // 1b. Restart-safe deduplication. Relays replay every addressable
+    // kind-37572 on (re)subscribe; without persistence a restart re-ran
+    // weeks of history (observed 2026-10-27). Newer versions of an
+    // addressable request still pass, matching the in-memory rule.
+    if (event.kind === 37572) {
+      const dTag = event.tags.find(t => t[0] === 'd')?.[1] ?? null
+      const dedupKey = requestDedupKey(event, dTag)
+      const prior = await this.store.getProcessedRequest(dedupKey)
+      if (prior && (dTag === null || event.created_at <= prior.createdAt)) {
+        console.log(
+          `[pipeline] skipped request ${event.id.slice(0, 8)}... — already processed (${prior.eventId.slice(0, 8)}...)`,
+        )
+        return
+      }
+      await this.store.markRequestProcessed(dedupKey, event.id, event.created_at)
+    }
 
     // 2. Kind check
     if (event.kind !== 37572) return
@@ -421,6 +450,7 @@ export class RequestPipeline {
     await this.publishWithProgress(receivedFeedback, ctx, publishRelays, progressContext)
 
     let outputEventCount = 0
+    let emittedNip85 = false
 
     try {
       const defaultReadRelays = [
@@ -439,6 +469,24 @@ export class RequestPipeline {
 
         if (unsignedEvent.kind !== 7000) {
           outputEventCount++
+        }
+        if (NIP85_ASSERTION_KINDS.has(unsignedEvent.kind)) {
+          emittedNip85 = true
+        }
+      }
+
+      // Per tsm/nip85-bridge a pubkey that signs 3038X events SHOULD also
+      // publish a kind-0 profile so NIP-85 consumers can label the provider.
+      // Subscription keys are "my POV, computed by TrustR": name them after
+      // the requesting user. Replaceable, so re-publishing per request is
+      // harmless.
+      if (emittedNip85 && ctx.mode === 'subscription_service') {
+        try {
+          const profile = buildSubscriptionProviderProfile(ctx.pubkey, event.pubkey)
+          await this.publisher.signAndPublish(profile, ctx.privkey, publishRelays)
+          console.log(`[pipeline] published kind 0 provider profile for subscription key ${ctx.pubkey.slice(0, 8)}...`)
+        } catch (profileErr) {
+          console.warn(`[pipeline] failed to publish subscription provider profile: ${profileErr instanceof Error ? profileErr.message : String(profileErr)}`)
         }
       }
 

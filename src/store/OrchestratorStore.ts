@@ -5,6 +5,7 @@ import type {
   NewRequestKey,
   SubscriptionStatus,
   RequestDurationStat,
+  ProcessedRequest,
 } from './types'
 
 export interface OrchestratorStore {
@@ -28,6 +29,10 @@ export interface OrchestratorStore {
   // ── Authorization ────────────────────────────────────────────────────────
 
   isAuthorized(userPubkey: string, serviceId: string): Promise<boolean>
+
+  // ── Processed requests (restart-safe dedup) ──────────────────────────────
+  getProcessedRequest(key: string): Promise<ProcessedRequest | null>
+  markRequestProcessed(key: string, eventId: string, createdAt: number): Promise<void>
 
   // ── Request duration stats ───────────────────────────────────────────────
 

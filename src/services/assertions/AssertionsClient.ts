@@ -1,4 +1,5 @@
-import type { NostrEvent, UnsignedEvent } from '../../store/types'
+import type { NostrEvent, ServiceRecord, UnsignedEvent } from '../../store/types'
+import { buildAssertionsAnnouncement, buildServiceProfile } from './profiles'
 import {
   parseAssertionsRequest,
   AssertionsRequestError,
@@ -32,12 +33,17 @@ export class AssertionsClient {
   }
 
   /**
-   * Announcement publishing is currently deferred for the assertions
-   * service. Throws to ensure callers (AnnouncementManager) handle the
-   * skip path rather than publishing a stub announcement.
+   * Kind-37570 announcement per tsm/assertion-services and
+   * tsm/nip85-bridge. AnnouncementManager enriches it with the `d` tag,
+   * the kind-7570 messaging `p` tag and the `r` relay tags.
    */
   async fetchAnnouncement(): Promise<UnsignedEvent> {
-    throw new Error('assertions service announcement is deferred')
+    return buildAssertionsAnnouncement()
+  }
+
+  /** Kind-0 profile for the service key (bridge provider SHOULD). */
+  buildProfile(service: ServiceRecord): UnsignedEvent {
+    return buildServiceProfile(service)
   }
 
   async *streamRequest(

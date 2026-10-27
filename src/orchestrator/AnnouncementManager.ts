@@ -2,6 +2,7 @@ import { hexToBytes } from 'nostr-tools/utils'
 import type { ServiceRecord, UnsignedEvent } from '../store/types'
 import type { EventPublisher } from '../relay/EventPublisher'
 import { ASSERTIONS_INTERNAL_ENDPOINT } from '../config'
+import { AssertionsClient } from '../services/assertions'
 import type { ServiceClientLike } from './Orchestrator'
 
 export class AnnouncementManager {
@@ -48,16 +49,21 @@ export class AnnouncementManager {
   }
 
   private async announceService(service: ServiceRecord): Promise<void> {
-    // Internal services (e.g. the placeholder assertions service) do not
-    // currently publish an announcement; they will once their real backend
-    // and output-standard references are in place.
-    if (service.endpoint === ASSERTIONS_INTERNAL_ENDPOINT) {
-      console.log(`[announce] skipping internal service ${service.name} (announcement deferred)`)
-      return
-    }
-
     const client = this.serviceClients.get(service.serviceId)
     if (!client) throw new Error(`No client for service ${service.serviceId}`)
+
+    // Bridge providers (tsm/nip85-bridge) SHOULD publish a kind-0 profile
+    // from the same key that signs announcements and assertions. Only the
+    // internal assertions service builds one; HTTP services own theirs.
+    if (service.endpoint === ASSERTIONS_INTERNAL_ENDPOINT && client instanceof AssertionsClient) {
+      const profile = client.buildProfile(service)
+      const signedProfile = await this.publisher.signAndPublish(
+        profile,
+        hexToBytes(service.privkey),
+        service.publishRelays,
+      )
+      console.log(`[announce] published kind 0 profile for ${service.name} (${signedProfile.id.slice(0, 8)}...)`)
+    }
 
     const unsignedAnnouncement = await client.fetchAnnouncement()
     const enrichedAnnouncement = this.enrichAnnouncement(unsignedAnnouncement, service)

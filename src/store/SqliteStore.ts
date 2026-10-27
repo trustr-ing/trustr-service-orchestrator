@@ -10,6 +10,7 @@ import type {
   NewRequestKey,
   SubscriptionStatus,
   RequestDurationStat,
+  ProcessedRequest,
 } from './types'
 
 export class SqliteStore implements OrchestratorStore {
@@ -68,7 +69,35 @@ export class SqliteStore implements OrchestratorStore {
 
       CREATE INDEX IF NOT EXISTS idx_request_duration_stats_service
         ON request_duration_stats(service_id);
+
+      CREATE TABLE IF NOT EXISTS processed_requests (
+        key TEXT PRIMARY KEY,
+        event_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        processed_at INTEGER NOT NULL
+      );
     `)
+  }
+
+  // ── Processed requests ───────────────────────────────────────────────────
+
+  async getProcessedRequest(key: string): Promise<ProcessedRequest | null> {
+    const row = this.db.prepare(
+      'SELECT key, event_id, created_at, processed_at FROM processed_requests WHERE key = ?',
+    ).get(key) as { key: string; event_id: string; created_at: number; processed_at: number } | undefined
+    if (!row) return null
+    return { key: row.key, eventId: row.event_id, createdAt: row.created_at, processedAt: row.processed_at }
+  }
+
+  async markRequestProcessed(key: string, eventId: string, createdAt: number): Promise<void> {
+    this.db.prepare(
+      `INSERT INTO processed_requests (key, event_id, created_at, processed_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET
+         event_id = excluded.event_id,
+         created_at = excluded.created_at,
+         processed_at = excluded.processed_at`,
+    ).run(key, eventId, createdAt, Math.floor(Date.now() / 1000))
   }
 
   // ── Subscriptions ──────────────────────────────────────────────────────
